@@ -7,6 +7,12 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
+
+  & tbody tr {
+    &.selected td {
+      background: var(--shallowThemeColor, rgba(58, 142, 230, 0.18));
+    }
+  }
 }
 
 .downloading-toolbar {
@@ -18,6 +24,17 @@
   top: 0;
   z-index: 5;
   background: var(--mainColor, #ffffff);
+
+  .downloading-toolbar-left {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.6rem;
+  }
+
+  .downloading-toolbar-text {
+    font-size: 0.85rem;
+    user-select: none;
+  }
 
   .downloading-toolbar-count {
     margin-left: auto;
@@ -34,21 +51,25 @@
 }
 
 .downloading-op-btn {
-  padding: 0.15rem 0.6rem;
-  font-size: 0.75rem;
-  line-height: 1.6;
-  border-radius: 0.4rem;
-  border: 1px solid var(--dividerColor, rgba(128, 128, 128, 0.3));
-  background: transparent;
-  color: var(--primaryColor, #333);
+  /* 与全局 [data-type="normalButton"]（如本地音乐「自动扫描」）保持一致 */
+  padding: 0.6em 1em;
+  font-size: 1em;
+  line-height: 1em;
+  border-radius: 8px;
+  border: 1px solid currentColor;
+  background-color: color-mix(in srgb, currentColor 8%, transparent);
+  color: var(--textColor, #333);
   cursor: pointer;
   white-space: nowrap;
   transition: all 0.2s ease;
   user-select: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 
   &:hover:not(:disabled) {
-    border-color: var(--themeColor, #3a8ee6);
-    color: var(--themeColor, #3a8ee6);
+    background-color: color-mix(in srgb, currentColor 15%, transparent);
+    transform: translateY(-1px);
   }
 
   &:disabled {
@@ -56,8 +77,8 @@
     cursor: not-allowed;
   }
 
-  &--danger:hover:not(:disabled) {
-    border-color: var(--dangerColor, #fc5f5f);
+  &--danger {
     color: var(--dangerColor, #fc5f5f);
+    background-color: color-mix(in srgb, var(--dangerColor) 8%, transparent);
   }
 }

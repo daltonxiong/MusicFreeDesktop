@@ -1,4 +1,5 @@
 import Tag from "@/renderer/components/Tag";
+import Checkbox from "@/renderer/components/Checkbox";
 import Downloader from "@/renderer/core/downloader";
 import {
     createColumnHelper,
@@ -12,6 +13,8 @@ import useVirtualList from "@/hooks/useVirtualList";
 import DownloadStatus from "./DownloadStatus";
 import { DownloadState } from "@/common/constant";
 import { useTranslation } from "react-i18next";
+import { getMediaPrimaryKey } from "@/common/media-util";
+import { createContext, useContext, useMemo, useState } from "react";
 
 const columnHelper = createColumnHelper<IMusic.IMusicItem>();
 
@@ -56,14 +59,57 @@ const columnDef = [
         size: 100,
         cell: (info) => <Tag fill>{info.getValue()}</Tag>,
     }),
-    columnHelper.display({
-        header: () => t("common.operation"),
-        size: 140,
-        minSize: 120,
-        id: "operation",
-        cell: (info) => <RowOperations musicItem={info.row.original} />,
-    }),
 ];
+
+/** 行内操作列：管理模式下隐藏，改用顶部批量操作 */
+const operationColumn = columnHelper.display({
+    header: () => t("common.operation"),
+    size: 140,
+    minSize: 120,
+    id: "operation",
+    cell: (info) => <RowOperations musicItem={info.row.original} />,
+});
+
+/** 管理模式上下文：供工具栏与选择列共享选中态 */
+interface IManageContext {
+    managing: boolean;
+    setManaging: (next: boolean) => void;
+    list: IMusic.IMusicItem[];
+    selected: Set<string>;
+    selectedItems: IMusic.IMusicItem[];
+    allChecked: boolean;
+    toggleKey: (key: string) => void;
+    toggleAll: () => void;
+    clearSelection: () => void;
+}
+
+const ManageContext = createContext<IManageContext>(null!);
+
+/** 选择列：管理模式下插到最前面 */
+const selectColumn = columnHelper.display({
+    header: () => <SelectAllCheckbox />,
+    size: 36,
+    minSize: 36,
+    maxSize: 36,
+    id: "select",
+    cell: (info) => <RowCheckbox musicItem={info.row.original} />,
+});
+
+function RowCheckbox(props: { musicItem: IMusic.IMusicItem }) {
+    const { selected, toggleKey } = useContext(ManageContext);
+    const key = getMediaPrimaryKey(props.musicItem);
+    return (
+        <Checkbox
+            checked={selected.has(key)}
+            onChange={() => toggleKey(key)}
+        ></Checkbox>
+    );
+}
+
+function SelectAllCheckbox() {
+    const { allChecked, toggleAll } = useContext(ManageContext);
+    return <Checkbox checked={allChecked} onChange={toggleAll}></Checkbox>;
+}
 
 /** 单任务操作：暂停/继续(失败项为重试) + 移除 */
 function RowOperations(props: { musicItem: IMusic.IMusicItem }) {
@@ -109,10 +155,86 @@ function RowOperations(props: { musicItem: IMusic.IMusicItem }) {
     );
 }
 
-/** 顶栏：全部暂停 / 全部继续 / 全部重试 / 清除失败 */
+/** 顶栏：管理模式（全选/暂停/重试/删除/退出）或普通模式（批量操作 + 管理入口） */
 function DownloadingToolbar() {
     const { t: t2 } = useTranslation();
     const summary = Downloader.useDownloadSummary();
+    const {
+        managing,
+        setManaging,
+        list,
+        selected,
+        selectedItems,
+        allChecked,
+        toggleAll,
+        clearSelection,
+    } = useContext(ManageContext);
+
+    const pauseSelected = () => {
+        selectedItems.forEach((it) => Downloader.pauseMusic(it));
+    };
+
+    const retrySelected = () => {
+        selectedItems.forEach((it) => Downloader.resumeMusic(it));
+    };
+
+    const removeSelected = () => {
+        if (selectedItems.length === 0) {
+            return;
+        }
+        const ok = window.confirm(
+            t2("download_page.confirm_delete", { count: selectedItems.length }),
+        );
+        if (!ok) {
+            return;
+        }
+        selectedItems.forEach((it) => Downloader.cancelTask(it));
+        clearSelection();
+    };
+
+    if (managing) {
+        const count = selectedItems.length;
+        return (
+            <div className="downloading-toolbar">
+                <span className="downloading-toolbar-left">
+                    <Checkbox checked={allChecked} onChange={toggleAll}></Checkbox>
+                    <span className="downloading-toolbar-text">
+                        {t2("common.select_all")}（{selected.size}/{list.length}）
+                    </span>
+                </span>
+                <button
+                    className="downloading-op-btn"
+                    disabled={count === 0}
+                    onClick={pauseSelected}
+                >
+                    {t2("download_page.pause")}
+                    {count > 0 ? ` (${count})` : ""}
+                </button>
+                <button
+                    className="downloading-op-btn"
+                    disabled={count === 0}
+                    onClick={retrySelected}
+                >
+                    {t2("download_page.retry")}
+                    {count > 0 ? ` (${count})` : ""}
+                </button>
+                <button
+                    className="downloading-op-btn downloading-op-btn--danger"
+                    disabled={count === 0}
+                    onClick={removeSelected}
+                >
+                    {t2("common.delete")}
+                    {count > 0 ? ` (${count})` : ""}
+                </button>
+                <button
+                    className="downloading-op-btn"
+                    onClick={() => setManaging(false)}
+                >
+                    {t2("download_page.exit_manage")}
+                </button>
+            </div>
+        );
+    }
 
     return (
         <div className="downloading-toolbar">
@@ -151,6 +273,13 @@ function DownloadingToolbar() {
                     )} ${summary.paused} / ${t2("download_page.failed")} ${summary.error}）`
                     : ""}
             </span>
+            <button
+                className="downloading-op-btn"
+                disabled={summary.total === 0}
+                onClick={() => setManaging(true)}
+            >
+                {t2("download_page.manage")}
+            </button>
         </div>
     );
 }
@@ -158,10 +287,63 @@ function DownloadingToolbar() {
 export default function Downloading() {
     const downloadingQueue = Downloader.useDownloadingMusicList();
 
+    const [managing, setManaging] = useState(false);
+    const [selected, setSelected] = useState<Set<string>>(new Set());
+
+    const manageCtx = useMemo<IManageContext>(() => {
+        const selectedItems = downloadingQueue.filter((it) =>
+            selected.has(getMediaPrimaryKey(it)),
+        );
+        return {
+            managing,
+            setManaging: (next: boolean) => {
+                setManaging(next);
+                if (!next) {
+                    setSelected(new Set());
+                }
+            },
+            list: downloadingQueue,
+            selected,
+            selectedItems,
+            allChecked:
+                downloadingQueue.length > 0 &&
+                selected.size === downloadingQueue.length,
+            toggleKey: (key: string) => {
+                setSelected((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(key)) {
+                        next.delete(key);
+                    } else {
+                        next.add(key);
+                    }
+                    return next;
+                });
+            },
+            toggleAll: () => {
+                setSelected((prev) =>
+                    prev.size === downloadingQueue.length
+                        ? new Set()
+                        : new Set(
+                            downloadingQueue.map((it) => getMediaPrimaryKey(it)),
+                        ),
+                );
+            },
+            clearSelection: () => setSelected(new Set()),
+        };
+    }, [managing, selected, downloadingQueue]);
+
+    const columns = useMemo(
+        () =>
+            managing
+                ? [selectColumn, ...columnDef]
+                : [...columnDef, operationColumn],
+        [managing],
+    );
+
     const table = useReactTable({
         debugAll: false,
         data: downloadingQueue,
-        columns: columnDef,
+        columns,
         getCoreRowModel: getCoreRowModel(),
     });
 
@@ -172,63 +354,82 @@ export default function Downloading() {
     });
 
     return (
-        <div className="downloading-container">
-            <DownloadingToolbar />
-            <table
-                style={{
-                    tableLayout: "fixed",
-                    height: virtualController.totalHeight + estimizeItemHeight,
-                }}
-            >
-                <thead>
-                    <tr>
-                        {table.getHeaderGroups()[0].headers.map((header) => (
-                            <th
-                                key={header.id}
-                                style={{
-                                    width: header.id === "extra" ? undefined : header.getSize(),
-                                }}
-                            >
-                                {flexRender(
-                                    header.column.columnDef.header,
-                                    header.getContext(),
-                                )}
-                            </th>
-                        ))}
-                    </tr>
-                </thead>
-                <tbody
+        <ManageContext.Provider value={manageCtx}>
+            <div className="downloading-container">
+                <DownloadingToolbar />
+                <table
                     style={{
-                        transform: `translateY(${virtualController.startTop}px)`,
+                        tableLayout: "fixed",
+                        height: virtualController.totalHeight + estimizeItemHeight,
                     }}
                 >
-                    {virtualController.virtualItems.map((virtualItem, index) => {
-                        const dataItem = virtualItem.dataItem;
-                        const musicItem = dataItem.original;
-                        return (
-                            <tr key={`${musicItem.platform}-${musicItem.id}`}>
-                                {dataItem.getAllCells().map((cell) => (
-                                    <td
-                                        key={cell.id}
-                                        style={{
-                                            width: cell.column.getSize(),
-                                        }}
-                                    >
-                                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                                    </td>
-                                ))}
-                            </tr>
-                        );
-                    })}
-                </tbody>
-                <tfoot
-                    style={{
-                        height:
-              virtualController.totalHeight -
-              virtualController.virtualItems.length * estimizeItemHeight,
-                    }}
-                ></tfoot>
-            </table>
-        </div>
+                    <thead>
+                        <tr>
+                            {table.getHeaderGroups()[0].headers.map((header) => (
+                                <th
+                                    key={header.id}
+                                    style={{
+                                        width:
+                                            header.id === "extra"
+                                                ? undefined
+                                                : header.getSize(),
+                                    }}
+                                >
+                                    {flexRender(
+                                        header.column.columnDef.header,
+                                        header.getContext(),
+                                    )}
+                                </th>
+                            ))}
+                        </tr>
+                    </thead>
+                    <tbody
+                        style={{
+                            transform: `translateY(${virtualController.startTop}px)`,
+                        }}
+                    >
+                        {virtualController.virtualItems.map((virtualItem, index) => {
+                            const dataItem = virtualItem.dataItem;
+                            const musicItem = dataItem.original;
+                            const pk = getMediaPrimaryKey(musicItem);
+                            const rowSelected = managing && selected.has(pk);
+                            return (
+                                <tr
+                                    key={`${musicItem.platform}-${musicItem.id}`}
+                                    className={rowSelected ? "selected" : ""}
+                                    onClick={
+                                        managing
+                                            ? () => manageCtx.toggleKey(pk)
+                                            : undefined
+                                    }
+                                >
+                                    {dataItem.getAllCells().map((cell) => (
+                                        <td
+                                            key={cell.id}
+                                            style={{
+                                                width: cell.column.getSize(),
+                                            }}
+                                        >
+                                            {flexRender(
+                                                cell.column.columnDef.cell,
+                                                cell.getContext(),
+                                            )}
+                                        </td>
+                                    ))}
+                                </tr>
+                            );
+                        })}
+                    </tbody>
+                    <tfoot
+                        style={{
+                            height:
+                                virtualController.totalHeight -
+                                virtualController.virtualItems.length *
+                                    estimizeItemHeight,
+                        }}
+                    ></tfoot>
+                </table>
+            </div>
+        </ManageContext.Provider>
     );
 }
