@@ -28,6 +28,17 @@ declare namespace IUserPreference {
     recentlyPlayList: IMusic.IMusicItem[];
     /** 已下载列表 */
     downloadedList: IMedia.IMediaBase[];
+    /** 下载中任务（含音乐项与状态，供应用重启后恢复继续下载） */
+    downloadingTasks: Array<{
+      musicItem: IMusic.IMusicItem;
+      status: {
+        state: string;
+        paused?: boolean;
+        msg?: string;
+        downloaded?: number;
+        total?: number;
+      };
+    }>;
     /** 本地音乐监听列表 */
     localWatchDir: string[];
     /** 本地音乐勾选的监听列表 */

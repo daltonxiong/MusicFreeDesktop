@@ -20,6 +20,10 @@ import { useEffect, useState } from "react";
 import { DownloadEvts, ee } from "./ee";
 import AppConfig from "@shared/app-config/renderer";
 import PluginManager from "@shared/plugin-manager/renderer";
+import {
+    getUserPreferenceIDB,
+    setUserPreferenceIDB,
+} from "@/renderer/utils/user-perference";
 
 export interface IDownloadStatus {
     state: DownloadState;
@@ -79,6 +83,88 @@ function refreshSummary() {
         paused,
         error,
     });
+    persistDownloadingTasks();
+}
+
+// ---------------------------------------------------------------------------
+// 下载中任务持久化
+//
+// 「下载中」列表（downloadingMusicStore / taskMap / downloadingProgress）都在
+// 内存中，应用退出即丢失。这里在任务表发生迁移（新增/完成/失败/暂停/取消）时，
+// 把仍在列表中的任务（音乐项 + 状态）写入 IDB；下次启动时恢复为「已暂停」，
+// 用户点「继续下载」即可重新解析音源并下载。注意：pause 中断 worker 时会清理
+// 半成品文件，因此恢复后的「继续」语义为重新下载（与暂停-继续一致）。
+// ---------------------------------------------------------------------------
+type IDownloadingTaskSnapshot = IUserPreference.IDBType["downloadingTasks"][number];
+
+function takeDownloadingTaskSnapshot(): IDownloadingTaskSnapshot[] {
+    const snapshots: IDownloadingTaskSnapshot[] = [];
+    for (const [pk, task] of taskMap) {
+        if (task.cancelled) {
+            continue;
+        }
+        const status = downloadingProgress.get(pk) ?? {
+            state: DownloadState.WAITING,
+        };
+        snapshots.push({
+            musicItem: task.musicItem,
+            status: {
+                state: status.state,
+                paused: status.paused,
+                msg: status.msg,
+            },
+        });
+    }
+    return snapshots;
+}
+
+// 串行化 IDB 写入：避免并发 put 乱序导致落盘的不是最新快照
+let persistQueue: Promise<unknown> = Promise.resolve();
+function persistDownloadingTasks() {
+    const snapshot = takeDownloadingTaskSnapshot();
+    persistQueue = persistQueue
+        .then(() => setUserPreferenceIDB("downloadingTasks", snapshot))
+        .catch(() => {});
+}
+
+/** 应用启动时恢复上次未完成的下载任务（统一转为「已暂停」，不自动开始） */
+async function restoreDownloadingTasks() {
+    const saved = (await getUserPreferenceIDB("downloadingTasks")) ?? [];
+    if (!saved.length) {
+        return;
+    }
+    const restored: IMusic.IMusicItem[] = [];
+    for (const item of saved) {
+        const musicItem = item?.musicItem;
+        if (!musicItem) {
+            continue;
+        }
+        const pk = getMediaPrimaryKey(musicItem);
+        // 已完成/已在表中/本地音乐的无需恢复
+        if (taskMap.has(pk) || isDownloaded(musicItem)) {
+            continue;
+        }
+        const isError = item.status?.state === DownloadState.ERROR;
+        taskMap.set(pk, {
+            pk,
+            musicItem,
+            stage: isError ? "ended" : "waiting",
+            // 非失败任务恢复为「已暂停」，等待用户手动继续
+            paused: !isError,
+            cancelled: false,
+        });
+        downloadingProgress.set(
+            pk,
+            isError
+                ? { state: DownloadState.ERROR, msg: item.status?.msg }
+                : { state: DownloadState.WAITING, paused: true },
+        );
+        restored.push(musicItem);
+    }
+    if (restored.length) {
+        downloadingMusicStore.setValue((prev) => [...prev, ...restored]);
+    }
+    refreshSummary();
 }
 
 type ProxyMarkedFunction<T extends (...args: any) => void> = T &
@@ -100,7 +186,9 @@ let downloaderWorker: IDownloaderWorker;
 
 async function setupDownloader() {
     setupDownloaderWorker();
-    setupDownloadedMusicList();
+    await setupDownloadedMusicList();
+    // 恢复上次退出时未完成的下载任务（转为已暂停，等待用户继续）
+    await restoreDownloadingTasks();
 }
 
 function setupDownloaderWorker() {

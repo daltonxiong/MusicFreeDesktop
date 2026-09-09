@@ -140,8 +140,8 @@ function DownloadingToolbar() {
             <span className="downloading-toolbar-count">
                 {summary.total
                     ? `${t2("common.downloading")}: ${summary.total}（${t2(
-                          "download_page.pause",
-                      )} ${summary.paused} / ${t2("download_page.failed")} ${summary.error}）`
+                        "download_page.pause",
+                    )} ${summary.paused} / ${t2("download_page.failed")} ${summary.error}）`
                     : ""}
             </span>
         </div>
