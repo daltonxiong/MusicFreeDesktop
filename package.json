@@ -14,6 +14,9 @@
     "lint-staged": "lint-staged",
     "prepare": "husky install"
   },
+  "overrides": {
+    "node-gyp": "12.3.0"
+  },
   "keywords": [],
   "author": {
     "name": "猫头猫",

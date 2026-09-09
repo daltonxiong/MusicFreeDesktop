@@ -21,7 +21,9 @@ const config: ForgeConfig = {
       },
     ],
   },
-  rebuildConfig: {},
+  // 只 rebuild better-sqlite3：sharp 走 N-API 预编译（跨 ABI 兼容），
+  // 无需也不应本地源码编译（libvips 源码编译在本地环境不可行）。
+  rebuildConfig: { onlyModules: ["better-sqlite3"] },
   makers: [
     // new MakerSquirrel({
     //   exe: "MusicFree",
