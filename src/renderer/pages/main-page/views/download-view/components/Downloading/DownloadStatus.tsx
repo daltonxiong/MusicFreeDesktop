@@ -24,12 +24,22 @@ function DownloadStatus(props: IProps) {
             </span>
         );
     } else if (downloadStatus.state === DownloadState.WAITING) {
-        return <span>{t("download_page.waiting")}</span>;
+        return (
+            <span>
+                {t("download_page.waiting")}
+                {downloadStatus.retryCount
+                    ? `（${t("download_page.retry")} ${downloadStatus.retryCount}/${downloadStatus.retryMax}）`
+                    : ""}
+            </span>
+        );
     } else if (downloadStatus.state === DownloadState.ERROR) {
         return (
             <span style={{ color: "var(--dangerColor, #FC5F5F)" }}>
                 {t("download_page.failed")}
                 {downloadStatus.msg ? `: ${downloadStatus.msg}` : ""}
+                {downloadStatus.retryCount
+                    ? `（${t("download_page.retry")} ${downloadStatus.retryCount}/${downloadStatus.retryMax}）`
+                    : ""}
             </span>
         );
     } else if (downloadStatus.state === DownloadState.DOWNLOADING) {

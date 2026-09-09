@@ -32,6 +32,10 @@ export interface IDownloadStatus {
     msg?: string;
     /** 用户手动暂停（仅作展示：等待中/下载中的任务被暂停） */
     paused?: boolean;
+    /** 自动重试：当前是第几次重试（仅在等待重试/最终失败时展示） */
+    retryCount?: number;
+    /** 自动重试上限 */
+    retryMax?: number;
 }
 
 const downloadingMusicStore = new Store<Array<IMusic.IMusicItem>>([]);
@@ -152,6 +156,7 @@ async function restoreDownloadingTasks() {
             // 非失败任务恢复为「已暂停」，等待用户手动继续
             paused: !isError,
             cancelled: false,
+            attempts: 0,
         });
         downloadingProgress.set(
             pk,
@@ -218,6 +223,10 @@ const concurrencyLimit = 20;
 let maxConcurrency = 5;
 let runningCount = 0;
 
+/** 下载失败后的自动重试次数与退避基数（第 n 次重试等待 n * 基数） */
+const AUTO_RETRY_MAX = 3;
+const AUTO_RETRY_DELAY_MS = 2000;
+
 type ITaskStage = "waiting" | "running" | "ended";
 
 interface IInternalTask {
@@ -228,6 +237,10 @@ interface IInternalTask {
     paused: boolean;
     /** 用户取消标记：中断后不再进入列表 */
     cancelled: boolean;
+    /** 已自动重试次数（手动「重试」时归零） */
+    attempts: number;
+    /** 自动重试冷却截止时间戳，在此之前 pump 不拉起该任务 */
+    retryAt?: number;
 }
 
 const taskMap = new Map<string, IInternalTask>();
@@ -258,9 +271,12 @@ function pump() {
         if (
             task.stage === "waiting" &&
             !task.paused &&
-            !task.cancelled
+            !task.cancelled &&
+            // 自动重试冷却中：等 timer 到点再拉起
+            !(task.retryAt && Date.now() < task.retryAt)
         ) {
             task.stage = "running";
+            task.retryAt = 0;
             runningCount++;
             runTask(task);
         }
@@ -275,6 +291,30 @@ function removeTaskFromLists(task: IInternalTask) {
     downloadingMusicStore.setValue((prev) =>
         prev.filter((di) => !isSameMedia(di, musicItem)),
     );
+}
+
+/**
+ * 下载失败后的自动重试：未达上限时把任务放回等待队列，冷却结束后由 pump
+ * 重新拉起（重新解析音源再下）。返回是否已安排重试。
+ */
+function tryAutoRetry(task: IInternalTask, msg?: string): boolean {
+    if (task.cancelled || task.paused || task.attempts >= AUTO_RETRY_MAX) {
+        return false;
+    }
+    task.attempts += 1;
+    const delay = AUTO_RETRY_DELAY_MS * task.attempts;
+    task.stage = "waiting";
+    task.retryAt = Date.now() + delay;
+    downloadingProgress.set(task.pk, {
+        state: DownloadState.WAITING,
+        retryCount: task.attempts,
+        retryMax: AUTO_RETRY_MAX,
+        msg,
+    });
+    emitStatus(task.musicItem, downloadingProgress.get(task.pk)!);
+    refreshSummary();
+    setTimeout(() => pump(), delay + 100);
+    return true;
 }
 
 async function runTask(task: IInternalTask) {
@@ -317,21 +357,35 @@ async function runTask(task: IInternalTask) {
                         refreshSummary();
                         resolve();
                     } else if (stateData.state === DownloadState.ERROR) {
-                        // 自然失败：任务滞留列表（显示失败，可重试/删除）
+                        // 先尝试自动重试；次数用尽才滞留列表（显示失败，可重试/删除）
+                        if (tryAutoRetry(task, stateData.msg)) {
+                            resolve();
+                            return;
+                        }
+                        downloadingProgress.set(pk, {
+                            ...stateData,
+                            retryCount: task.attempts,
+                            retryMax: AUTO_RETRY_MAX,
+                        });
+                        emitStatus(musicItem, downloadingProgress.get(pk)!);
                         task.stage = "ended";
                         refreshSummary();
                         resolve();
                     }
                 });
             } catch (e) {
-                // 同步异常兜底：避免任务永久卡在 running
-                downloadingProgress.set(pk, {
-                    state: DownloadState.ERROR,
-                    msg: e?.message,
-                });
-                emitStatus(musicItem, downloadingProgress.get(pk)!);
-                task.stage = "ended";
-                refreshSummary();
+                // 同步异常兜底：先尝试自动重试，否则标记失败，避免任务永久卡在 running
+                if (!tryAutoRetry(task, e?.message)) {
+                    downloadingProgress.set(pk, {
+                        state: DownloadState.ERROR,
+                        msg: e?.message,
+                        retryCount: task.attempts,
+                        retryMax: AUTO_RETRY_MAX,
+                    });
+                    emitStatus(musicItem, downloadingProgress.get(pk)!);
+                    task.stage = "ended";
+                    refreshSummary();
+                }
                 resolve();
             }
         });
@@ -368,6 +422,7 @@ async function startDownload(
             stage: "waiting",
             paused: false,
             cancelled: false,
+            attempts: 0,
         });
     });
 
@@ -419,6 +474,9 @@ async function resumeMusic(musicItems: IMusic.IMusicItem | IMusic.IMusicItem[]) 
         }
         task.paused = false;
         task.stage = "waiting";
+        // 手动「重试」重新给满自动重试次数
+        task.attempts = 0;
+        task.retryAt = 0;
         downloadingProgress.set(pk, {
             state: DownloadState.WAITING,
         });
