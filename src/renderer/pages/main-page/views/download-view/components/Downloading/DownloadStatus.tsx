@@ -17,12 +17,19 @@ function DownloadStatus(props: IProps) {
     const downloadStatus = Downloader.useDownloadStatus(musicItem);
     if (!downloadStatus) {
         return <span>-</span>;
+    } else if (downloadStatus.paused) {
+        return (
+            <span style={{ color: "var(--warningColor, #E6A23C)" }}>
+                {t("download_page.paused")}
+            </span>
+        );
     } else if (downloadStatus.state === DownloadState.WAITING) {
         return <span>{t("download_page.waiting")}</span>;
     } else if (downloadStatus.state === DownloadState.ERROR) {
         return (
             <span style={{ color: "var(--dangerColor, #FC5F5F)" }}>
-                {t("download_page.failed")}: {downloadStatus.msg}
+                {t("download_page.failed")}
+                {downloadStatus.msg ? `: ${downloadStatus.msg}` : ""}
             </span>
         );
     } else if (downloadStatus.state === DownloadState.DOWNLOADING) {

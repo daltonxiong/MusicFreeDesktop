@@ -7,7 +7,81 @@
       letter-spacing: 0.05rem;
       user-select: none;
     }
-  
 
+    & .downloaded-container {
+      width: 100%;
+    }
+
+    & .downloaded-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.4rem 0 0.8rem;
+
+      .downloaded-header-left,
+      .downloaded-header-right {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.6rem;
+      }
+
+      .downloaded-header-text {
+        font-size: 0.85rem;
+        user-select: none;
+      }
+    }
+
+    & .downloaded-manage-list {
+      .downloaded-manage-row {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        padding: 0.45rem 0.4rem;
+        border-radius: 0.4rem;
+        cursor: pointer;
+        user-select: none;
+
+        &:hover {
+          background: var(--shallowThemeColor, rgba(58, 142, 230, 0.1));
+        }
+
+        &.selected {
+          background: var(--shallowThemeColor, rgba(58, 142, 230, 0.18));
+        }
+
+        .downloaded-manage-title {
+          flex: 3;
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .downloaded-manage-artist {
+          flex: 1.5;
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          opacity: 0.75;
+        }
+
+        .downloaded-manage-album {
+          flex: 1.5;
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          opacity: 0.75;
+        }
+      }
+
+      .downloaded-manage-empty {
+        padding: 2rem 0;
+        text-align: center;
+        opacity: 0.5;
+        user-select: none;
+      }
+    }
   }
   

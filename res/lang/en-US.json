@@ -28,25 +28,21 @@
     "save": "Save",
     "clear": "Clear",
     "open": "Open",
-    "status": "Status"
+    "status": "Status",
+    "empty": "No Data"
   },
-
   "media": {
     "unknown_title": "Untitled",
     "unknown_artist": "Unknown Artist",
     "unknown_album": "Unknown Album",
-
     "default_favorite_sheet_name": "Favorites",
-
     "playlist": "Playlist",
-
     "media_type_music": "Music",
     "media_type_album": "Album",
     "media_type_artist": "Artist",
     "media_type_sheet": "Playlist",
     "media_type_lyric": "Lyric",
     "media_type_comment": "Comment",
-
     "media_title": "Title",
     "media_platform": "Source",
     "media_duration": "Duration",
@@ -54,7 +50,6 @@
     "media_play_count": "Play Count",
     "media_music_count": "Song Count",
     "media_description": "Description",
-
     "music_state_pause": "Pause",
     "music_state_play": "Play",
     "music_state_play_or_pause": "Play/Pause",
@@ -62,28 +57,38 @@
     "music_quality_standard": "Standard Quality",
     "music_quality_high": "High Quality",
     "music_quality_super": "Super Quality",
-
     "music_repeat_mode": "Repeat Mode",
     "music_repeat_mode_loop": "Single Loop",
     "music_repeat_mode_queue": "Queue Loop",
     "music_repeat_mode_shuffle": "Shuffle Play"
   },
-
   "plugin": {
     "prop_user_variable": "User Variable",
     "method_search": "Search",
     "method_import_music_item": "Import Song",
     "method_import_music_sheet": "Import Playlist",
     "method_get_top_lists": "Top Charts",
-
     "info_hint_you_have_no_plugin": "You have no plugins installed",
     "info_hint_you_have_no_plugin_with_supported_method": "You have no plugins installed that support <highlight>{{supportMethod}}</highlight> feature",
     "info_hint_install_plugin_before_use": "Go to <a>Plugin Management</a> to install plugins~"
   },
-
   "download_page": {
     "waiting": "Waiting...",
-    "failed": "Download Failed"
+    "failed": "Download Failed",
+    "pause": "Pause",
+    "resume": "Resume",
+    "retry": "Retry",
+    "paused": "Paused",
+    "pause_all": "Pause All",
+    "resume_all": "Resume All",
+    "clear_failed": "Clear Failed",
+    "remove_task": "Remove Task",
+    "manage": "Manage",
+    "exit_manage": "Exit Manage",
+    "delete_selected": "Delete Selected",
+    "confirm_delete": "Delete the selected {{count}} song(s) including local files?",
+    "select_all_downloaded": "Select All",
+    "delete_file": "incl. local files"
   },
   "plugin_management_page": {
     "plugin_management": "Plugin Management",
@@ -104,18 +109,14 @@
     "update_subscription": "Update Subscription",
     "update_successfully": "Update Successful",
     "no_subscription": "No Current Subscriptions",
-
     "uninstall": "Uninstall",
     "uninstall_plugin": "Uninstall Plugin",
     "confirm_text_uninstall_plugin": "Confirm to uninstall plugin {{plugin}}?",
     "uninstall_successfully": "Uninstalled {{plugin}} successfully",
     "uninstall_failed": "Uninstall Failed",
-
     "toast_plugin_is_latest": "Plugin {{plugin}} is up to date",
     "update_failed": "Update Failed",
-
     "update": "Update",
-
     "importing_media": "Importing",
     "placeholder_import_music_item": "Enter {{plugin}} song link",
     "import_failed": "Import Failed",
@@ -131,7 +132,6 @@
     "folder_view": "Folder View",
     "total_music_num": "Total {{number}} songs"
   },
-
   "music_list_context_menu": {
     "next_play": "Play Next",
     "add_to_my_sheets": "Add to Playlist",
@@ -139,11 +139,9 @@
     "delete_local_download": "Delete Local Download",
     "reveal_local_music_in_file_explorer": "Show in File Explorer",
     "reveal_local_music_in_file_explorer_fail": "Open Failed: ",
-
     "delete_local_downloaded_songs_success": "Deleted {{musicNums}} local songs",
     "delete_local_downloaded_song_success": "Deleted local song [{{songName}}]"
   },
-
   "search_result_page": {
     "search_result_title": "Search Results for"
   },
@@ -153,11 +151,9 @@
     "download_management": "Download Management",
     "local_music": "Local Music",
     "plugin_management": "Plugin Management",
-
     "my_sheets": "My Playlists",
     "create_local_sheet": "Create Playlist",
     "starred_sheets": "Favorites",
-
     "delete_sheet": "Delete",
     "rename_sheet": "Rename",
     "unstar_sheet": "Unstar",
@@ -189,14 +185,12 @@
   "music_detail": {
     "search_lyric": "Search Lyric",
     "no_lyric": "No Lyrics",
-
     "lyric_ctx_download_lyric": "Download Lyric",
     "lyric_ctx_download_lyric_lrc": "Download Lyric (.lrc)",
     "lyric_ctx_download_lyric_txt": "Download Lyric (.txt)",
     "lyric_ctx_download_success": "Download Successful",
     "lyric_ctx_download_fail": "Download Failed",
     "lyric_ctx_set_font_size": "Set Font Size",
-
     "link_media_lyric": "Link Lyric",
     "media_lyric_linked": "Lyric Linked: ",
     "unlink_media_lyric": "Unlink Lyric",
@@ -250,7 +244,6 @@
     "change_path": "Change Path",
     "folder_not_exist": "Folder Not Exist",
     "open_folder": "Open Folder",
-
     "section_name": {
       "normal": "General",
       "play_music": "Playback",

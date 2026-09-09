@@ -28,7 +28,8 @@
     "save": "保存",
     "clear": "清空",
     "open": "打开",
-    "status": "状态"
+    "status": "状态",
+    "empty": "暂无数据"
   },
   "media": {
     "unknown_title": "未命名",
@@ -73,7 +74,21 @@
   },
   "download_page": {
     "waiting": "等待中...",
-    "failed": "下载失败"
+    "failed": "下载失败",
+    "pause": "暂停",
+    "resume": "继续",
+    "retry": "重试",
+    "paused": "已暂停",
+    "pause_all": "全部暂停",
+    "resume_all": "全部继续",
+    "clear_failed": "清除失败项",
+    "remove_task": "移除任务",
+    "manage": "管理",
+    "exit_manage": "退出管理",
+    "delete_selected": "删除选中",
+    "confirm_delete": "确定删除选中的 {{count}} 首歌（含本地文件）吗？",
+    "select_all_downloaded": "全选",
+    "delete_file": "含本地文件"
   },
   "plugin_management_page": {
     "plugin_management": "插件管理",

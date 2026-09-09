@@ -6,7 +6,6 @@ import {
 } from "@/common/media-util";
 import * as Comlink from "comlink";
 import { DownloadState, localPluginName } from "@/common/constant";
-import PQueue from "p-queue";
 import {
     addDownloadedMusicToList,
     isDownloaded,
@@ -22,19 +21,68 @@ import { DownloadEvts, ee } from "./ee";
 import AppConfig from "@shared/app-config/renderer";
 import PluginManager from "@shared/plugin-manager/renderer";
 
-
 export interface IDownloadStatus {
     state: DownloadState;
     downloaded?: number;
     total?: number;
     msg?: string;
+    /** 用户手动暂停（仅作展示：等待中/下载中的任务被暂停） */
+    paused?: boolean;
 }
 
 const downloadingMusicStore = new Store<Array<IMusic.IMusicItem>>([]);
 const downloadingProgress = new Map<string, IDownloadStatus>();
 
+/** 下载任务汇总（驱动 UI 工具条按钮的可用状态） */
+const summaryStore = new Store<{
+    total: number;
+    running: number;
+    waiting: number;
+    paused: number;
+    error: number;
+}>({ total: 0, running: 0, waiting: 0, paused: 0, error: 0 });
+
+function refreshSummary() {
+    let running = 0;
+    let waiting = 0;
+    let paused = 0;
+    let error = 0;
+    for (const [pk, task] of taskMap) {
+        if (task.cancelled) {
+            continue;
+        }
+        const s = downloadingProgress.get(pk);
+        if (task.paused || s?.paused) {
+            paused++;
+        } else if (s) {
+            switch (s.state) {
+                case DownloadState.DOWNLOADING:
+                    running++;
+                    break;
+                case DownloadState.ERROR:
+                    error++;
+                    break;
+                default:
+                    waiting++;
+                    break;
+            }
+        } else if (task.stage === "running") {
+            running++;
+        } else {
+            waiting++;
+        }
+    }
+    summaryStore.setValue({
+        total: running + waiting + paused + error,
+        running,
+        waiting,
+        paused,
+        error,
+    });
+}
+
 type ProxyMarkedFunction<T extends (...args: any) => void> = T &
-  Comlink.ProxyMarked;
+    Comlink.ProxyMarked;
 
 type IOnStateChangeFunc = (data: IDownloadStatus) => void;
 
@@ -42,8 +90,10 @@ interface IDownloaderWorker {
     downloadFile: (
         mediaSource: IMusic.IMusicSource,
         filePath: string,
-        onStateChange: ProxyMarkedFunction<IOnStateChangeFunc>
+        onStateChange: ProxyMarkedFunction<IOnStateChangeFunc>,
+        options?: { token?: string },
     ) => Promise<void>;
+    abortDownload: (token: string) => Promise<void>;
 }
 
 let downloaderWorker: IDownloaderWorker;
@@ -63,19 +113,144 @@ function setupDownloaderWorker() {
     setDownloadingConcurrency(AppConfig.getConfig("download.concurrency"));
 }
 
+// ---------------------------------------------------------------------------
+// 可暂停调度器（替换 p-queue）
+//
+// 原实现（PQueue）一旦把任务 addAll 进队就失去对单个任务的控制，无法实现
+// 暂停/继续/取消。这里改为任务表 + 简单并发泵：
+//   taskMap[pk] 记录每个任务的调度状态（waiting/running/ended）与用户标记
+//   （paused/cancelled）；pump() 在并发有余量时把 waiting 的任务拉起执行。
+// 状态流转：
+//   waiting --pump--> running --DONE-->  从列表与任务表移除
+//                         |--ERROR--> ended(失败滞留，可重试/删除)
+//   waiting/running --暂停--> paused(保留在列表，可继续)
+//   waiting/running/ended --取消--> 从列表/任务表/进度表移除
+// ---------------------------------------------------------------------------
 const concurrencyLimit = 20;
-const downloadingQueue = new PQueue({
-    concurrency: 5,
-});
+let maxConcurrency = 5;
+let runningCount = 0;
+
+type ITaskStage = "waiting" | "running" | "ended";
+
+interface IInternalTask {
+    pk: string;
+    musicItem: IMusic.IMusicItem;
+    stage: ITaskStage;
+    /** 用户暂停标记：暂停中的任务不会被 pump 拉起 */
+    paused: boolean;
+    /** 用户取消标记：中断后不再进入列表 */
+    cancelled: boolean;
+}
+
+const taskMap = new Map<string, IInternalTask>();
 
 function setDownloadingConcurrency(concurrency: number) {
     if (isNaN(concurrency)) {
         return;
     }
-    downloadingQueue.concurrency = Math.min(
+    maxConcurrency = Math.min(
         concurrency < 1 ? 1 : concurrency,
         concurrencyLimit,
     );
+    pump();
+}
+
+function emitStatus(musicItem: IMusic.IMusicItem, status: IDownloadStatus) {
+    ee.emit(DownloadEvts.DownloadStatusUpdated, musicItem, status);
+}
+
+function pump() {
+    if (runningCount >= maxConcurrency) {
+        return;
+    }
+    for (const task of taskMap.values()) {
+        if (runningCount >= maxConcurrency) {
+            break;
+        }
+        if (
+            task.stage === "waiting" &&
+            !task.paused &&
+            !task.cancelled
+        ) {
+            task.stage = "running";
+            runningCount++;
+            runTask(task);
+        }
+    }
+}
+
+/** 移除任务占位（列表/进度/任务表同步清理） */
+function removeTaskFromLists(task: IInternalTask) {
+    const { pk, musicItem } = task;
+    taskMap.delete(pk);
+    downloadingProgress.delete(pk);
+    downloadingMusicStore.setValue((prev) =>
+        prev.filter((di) => !isSameMedia(di, musicItem)),
+    );
+}
+
+async function runTask(task: IInternalTask) {
+    const { pk, musicItem } = task;
+    try {
+        await new Promise<void>((resolve) => {
+            const fileName = `${musicItem.title}-${musicItem.artist}`.replace(
+                /[/|\\?*"<>:]/g,
+                "_",
+            );
+            try {
+                downloadMusicImpl(musicItem, fileName, (stateData) => {
+                    // 已被取消：行已从列表移除，这里直接结束，不再写任何状态
+                    if (task.cancelled) {
+                        resolve();
+                        return;
+                    }
+                    // 用户暂停导致 worker 中断(会回调 ERROR)：覆盖为「已暂停」展示
+                    if (task.paused) {
+                        task.stage = "ended";
+                        downloadingProgress.set(pk, {
+                            state: DownloadState.WAITING,
+                            paused: true,
+                            downloaded: stateData.downloaded,
+                            total: stateData.total,
+                        });
+                        emitStatus(musicItem, downloadingProgress.get(pk)!);
+                        refreshSummary();
+                        resolve();
+                        return;
+                    }
+                    downloadingProgress.set(pk, stateData);
+                    emitStatus(musicItem, stateData);
+                    if (stateData.state === DownloadState.DONE) {
+                        downloadingMusicStore.setValue((prev) =>
+                            prev.filter((di) => !isSameMedia(di, musicItem)),
+                        );
+                        downloadingProgress.delete(pk);
+                        taskMap.delete(pk);
+                        refreshSummary();
+                        resolve();
+                    } else if (stateData.state === DownloadState.ERROR) {
+                        // 自然失败：任务滞留列表（显示失败，可重试/删除）
+                        task.stage = "ended";
+                        refreshSummary();
+                        resolve();
+                    }
+                });
+            } catch (e) {
+                // 同步异常兜底：避免任务永久卡在 running
+                downloadingProgress.set(pk, {
+                    state: DownloadState.ERROR,
+                    msg: e?.message,
+                });
+                emitStatus(musicItem, downloadingProgress.get(pk)!);
+                task.stage = "ended";
+                refreshSummary();
+                resolve();
+            }
+        });
+    } finally {
+        runningCount--;
+        pump();
+    }
 }
 
 async function startDownload(
@@ -86,45 +261,154 @@ async function startDownload(
     }
 
     const _musicItems = Array.isArray(musicItems) ? musicItems : [musicItems];
-    // 过滤掉已下载的、本地音乐、任务中的音乐
+    // 过滤掉已下载的、本地音乐、已在任务表中的音乐
     const _validMusicItems = _musicItems.filter(
-        (it) => !isDownloaded(it) && it.platform !== localPluginName,
+        (it) =>
+            !isDownloaded(it) &&
+            it.platform !== localPluginName &&
+            !taskMap.has(getMediaPrimaryKey(it)),
     );
 
-    const downloadCallbacks = _validMusicItems.map((it) => {
+    _validMusicItems.forEach((it) => {
         const pk = getMediaPrimaryKey(it);
         downloadingProgress.set(pk, {
             state: DownloadState.WAITING,
         });
-
-        return async () => {
-            // Not on waiting list
-            if (!downloadingProgress.has(pk)) {
-                return;
-            }
-
-            downloadingProgress.get(pk).state = DownloadState.DOWNLOADING;
-            const fileName = `${it.title}-${it.artist}`.replace(/[/|\\?*"<>:]/g, "_");
-            await new Promise<void>((resolve) => {
-                downloadMusicImpl(it, fileName, (stateData) => {
-                    downloadingProgress.set(pk, stateData);
-                    ee.emit(DownloadEvts.DownloadStatusUpdated, it, stateData);
-                    if (stateData.state === DownloadState.DONE) {
-                        downloadingMusicStore.setValue((prev) =>
-                            prev.filter((di) => !isSameMedia(it, di)),
-                        );
-                        downloadingProgress.delete(pk);
-                        resolve();
-                    } else if (stateData.state === DownloadState.ERROR) {
-                        resolve();
-                    }
-                });
-            });
-        };
+        taskMap.set(pk, {
+            pk,
+            musicItem: it,
+            stage: "waiting",
+            paused: false,
+            cancelled: false,
+        });
     });
 
     downloadingMusicStore.setValue((prev) => [...prev, ..._validMusicItems]);
-    downloadingQueue.addAll(downloadCallbacks);
+    refreshSummary();
+    pump();
+}
+
+/**
+ * 暂停单个任务：排队中的直接挂起；下载中的先中断 worker(残留文件会被清理)，
+ * 任务保留在「下载中」列表，显示为已暂停，可继续。
+ */
+async function pauseMusic(musicItems: IMusic.IMusicItem | IMusic.IMusicItem[]) {
+    const list = Array.isArray(musicItems) ? musicItems : [musicItems];
+    await Promise.all(
+        list.map(async (it) => {
+            const pk = getMediaPrimaryKey(it);
+            const task = taskMap.get(pk);
+            if (!task || task.paused || task.cancelled) {
+                return;
+            }
+            task.paused = true;
+            if (task.stage === "running") {
+                await downloaderWorker?.abortDownload(pk);
+            }
+            downloadingProgress.set(pk, {
+                state: DownloadState.WAITING,
+                paused: true,
+            });
+            emitStatus(it, downloadingProgress.get(pk)!);
+        }),
+    );
+    refreshSummary();
+}
+
+/**
+ * 继续任务：对「已暂停」的任务恢复排队；对「下载失败」滞留的任务等效为重试。
+ */
+async function resumeMusic(musicItems: IMusic.IMusicItem | IMusic.IMusicItem[]) {
+    if (!downloaderWorker) {
+        setupDownloaderWorker();
+    }
+    const list = Array.isArray(musicItems) ? musicItems : [musicItems];
+    list.forEach((it) => {
+        const pk = getMediaPrimaryKey(it);
+        const task = taskMap.get(pk);
+        if (!task || task.cancelled || task.stage === "running") {
+            return;
+        }
+        task.paused = false;
+        task.stage = "waiting";
+        downloadingProgress.set(pk, {
+            state: DownloadState.WAITING,
+        });
+        emitStatus(it, downloadingProgress.get(pk)!);
+    });
+    refreshSummary();
+    pump();
+}
+
+/**
+ * 取消任务：从下载列表移除（排队中的直接移除，下载中的中断 worker，
+ * 失败滞留的清除）。不同于暂停——任务不再保留。
+ */
+async function cancelTask(
+    musicItems: IMusic.IMusicItem | IMusic.IMusicItem[],
+) {
+    const list = Array.isArray(musicItems) ? musicItems : [musicItems];
+    await Promise.all(
+        list.map(async (it) => {
+            const pk = getMediaPrimaryKey(it);
+            const task = taskMap.get(pk);
+            if (!task) {
+                return;
+            }
+            task.cancelled = true;
+            if (task.stage === "running") {
+                await downloaderWorker?.abortDownload(pk);
+            }
+            removeTaskFromLists(task);
+            emitStatus(it, { state: DownloadState.NONE });
+        }),
+    );
+    refreshSummary();
+}
+
+function getRunningOrWaitingTasks(): IInternalTask[] {
+    return [...taskMap.values()].filter(
+        (t) => !t.cancelled && (t.stage === "waiting" || t.stage === "running"),
+    );
+}
+
+async function pauseAll() {
+    await pauseMusic(getRunningOrWaitingTasks().map((t) => t.musicItem));
+}
+
+async function resumeAll() {
+    await resumeMusic(
+        [...taskMap.values()]
+            .filter((t) => !t.cancelled && t.paused)
+            .map((t) => t.musicItem),
+    );
+}
+
+/** 批量重试失败滞留的任务 */
+async function retryFailedTasks() {
+    await resumeMusic(
+        [...taskMap.values()]
+            .filter(
+                (t) =>
+                    !t.cancelled &&
+                    t.stage === "ended" &&
+                    downloadingProgress.get(t.pk)?.state === DownloadState.ERROR,
+            )
+            .map((t) => t.musicItem),
+    );
+}
+
+/** 清除全部失败滞留的任务（从下载列表移除） */
+async function clearFailedTasks() {
+    await cancelTask(
+        [...taskMap.values()]
+            .filter(
+                (t) =>
+                    !t.cancelled &&
+                    downloadingProgress.get(t.pk)?.state === DownloadState.ERROR,
+            )
+            .map((t) => t.musicItem),
+    );
 }
 
 async function downloadMusicImpl(
@@ -155,17 +439,18 @@ async function downloadMusicImpl(
         } catch {}
     }
 
+    const pk = getMediaPrimaryKey(musicItem);
     try {
         if (mediaSource?.url) {
             const ext = mediaSource.url.match(/.*\/.+\.([^./?#]+)/)?.[1] ?? "mp3";
             const downloadBasePath =
-        AppConfig.getConfig("download.path") ??
-        getGlobalContext().appPath.downloads;
+                AppConfig.getConfig("download.path") ??
+                getGlobalContext().appPath.downloads;
             const downloadPath = window.path.resolve(
                 downloadBasePath,
                 `./${fileName}.${ext}`,
             );
-            downloaderWorker.downloadFile(
+            await downloaderWorker.downloadFile(
                 mediaSource,
                 downloadPath,
                 Comlink.proxy((dataState) => {
@@ -184,6 +469,7 @@ async function downloadMusicImpl(
                         );
                     }
                 }),
+                { token: pk },
             );
         } else {
             throw new Error("Invalid Source");
@@ -236,6 +522,14 @@ function useDownloadState(musicItem: IMusic.IMusicItem) {
 const Downloader = {
     setupDownloader,
     startDownload,
+    pauseMusic,
+    resumeMusic,
+    cancelTask,
+    pauseAll,
+    resumeAll,
+    retryFailedTasks,
+    clearFailedTasks,
+    useDownloadSummary: summaryStore.useValue,
     useDownloadStatus,
     useDownloadingMusicList: downloadingMusicStore.useValue,
     useDownloaded,

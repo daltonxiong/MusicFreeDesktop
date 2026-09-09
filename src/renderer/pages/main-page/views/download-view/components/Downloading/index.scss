@@ -2,14 +2,62 @@
   width: 100%;
   min-height: 300px;
 
-
-
   & td {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+}
 
+.downloading-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.4rem 0 0.8rem;
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: var(--mainColor, #ffffff);
+
+  .downloading-toolbar-count {
+    margin-left: auto;
+    font-size: 0.8rem;
+    opacity: 0.65;
+    user-select: none;
+  }
+}
+
+.downloading-op {
+  display: inline-flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.downloading-op-btn {
+  padding: 0.15rem 0.6rem;
+  font-size: 0.75rem;
+  line-height: 1.6;
+  border-radius: 0.4rem;
+  border: 1px solid var(--dividerColor, rgba(128, 128, 128, 0.3));
+  background: transparent;
+  color: var(--primaryColor, #333);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.2s ease;
+  user-select: none;
+
+  &:hover:not(:disabled) {
+    border-color: var(--themeColor, #3a8ee6);
+    color: var(--themeColor, #3a8ee6);
   }
 
- 
+  &:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  &--danger:hover:not(:disabled) {
+    border-color: var(--dangerColor, #fc5f5f);
+    color: var(--dangerColor, #fc5f5f);
+  }
 }

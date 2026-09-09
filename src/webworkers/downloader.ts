@@ -18,6 +18,16 @@ async function cleanFile(filePath: string) {
     }
 }
 
+/** 主线程通过 token 中断对应的下载任务（fetch abort + 流销毁） */
+const abortControllers = new Map<string, AbortController>();
+
+export function abortDownload(token: string) {
+    const controller = abortControllers.get(token);
+    if (controller) {
+        controller.abort();
+    }
+}
+
 const responseToReadable = (
     response: Response,
     options?: {
@@ -34,7 +44,15 @@ const responseToReadable = (
         trailing: true,
     });
     rs._read = async () => {
-        const result = await reader.read();
+        let result: ReadableStreamReadResult<Uint8Array>;
+        try {
+            result = await reader.read();
+        } catch (e) {
+            // fetch 被 AbortSignal 中断时 reader.read 会 reject：
+            // 直接把流销毁（触发下游 error/close），避免未处理 rejection
+            rs.destroy(e);
+            return;
+        }
         if (!result.done) {
             rs.push(Buffer.from(result.value));
             size += result.value.byteLength;
@@ -60,21 +78,33 @@ async function downloadFile(
     mediaSource: IMusic.IMusicSource,
     filePath: string,
     onStateChange: IOnStateChangeFunc,
+    options?: { token?: string },
 ) {
+    const token = options?.token;
+    const controller = new AbortController();
+    if (token) {
+        abortControllers.set(token, controller);
+    }
+    const signal = controller.signal;
+
+    let settled = false;
+    const notify = (data: Parameters<IOnStateChangeFunc>[0]) => {
+        if (settled) {
+            return;
+        }
+        settled = true;
+        if (token) {
+            abortControllers.delete(token);
+        }
+        onStateChange?.(data);
+    };
+
     let state = DownloadState.DOWNLOADING;
     try {
         const stat = fs.statSync(filePath);
-        // if (stat.isFile()) {
-        //   state = DownloadState.ERROR;
-        //   onStateChange?.({
-        //     state,
-        //     msg: "File Exist",
-        //   });
-        //   return;
-        // }
         if (stat.isDirectory()) {
             state = DownloadState.ERROR;
-            onStateChange?.({
+            notify({
                 state,
                 msg: "Filepath is a directory",
             });
@@ -99,9 +129,12 @@ async function downloadFile(
             urlObj.password = "";
             res = await fetch(urlObj.toString(), {
                 headers: _headers,
+                signal,
             });
         } else {
-            res = await fetch(encodeUrlHeaders(mediaSource.url, _headers));
+            res = await fetch(encodeUrlHeaders(mediaSource.url, _headers), {
+                signal,
+            });
         }
 
         const totalSize = +res.headers.get("content-length");
@@ -110,13 +143,13 @@ async function downloadFile(
             downloaded: 0,
             total: totalSize,
         });
+        const writeStream = fs.createWriteStream(filePath);
         const stm = responseToReadable(res, {
             onRead(size) {
                 if (state !== DownloadState.DOWNLOADING) {
                     return;
                 }
                 state = DownloadState.DOWNLOADING;
-                console.log(state, size, totalSize);
                 onStateChange({
                     state,
                     downloaded: size,
@@ -130,22 +163,34 @@ async function downloadFile(
                     msg: e?.message,
                 });
             },
-        }).pipe(fs.createWriteStream(filePath));
+        }).pipe(writeStream);
+
+        // 被主线程暂停/取消：销毁流、清理半成品文件，并通知结束。
+        // 注意必须带 error destroy，否则只触发 'close' 会被误判为下载完成。
+        signal.addEventListener("abort", () => {
+            stm.destroy(new Error("download aborted"));
+            writeStream.destroy(new Error("download aborted"));
+        });
 
         stm.on("close", () => {
             state = DownloadState.DONE;
-            onStateChange({
+            notify({
                 state,
             });
         });
 
-        stm.on("error", () => {
-            // 清理文件
+        stm.on("error", (e) => {
+            state = DownloadState.ERROR;
+            notify({
+                state,
+                msg: e?.message,
+            });
+            // 清理文件（被中断的半成品/失败残留）
             cleanFile(filePath);
         });
     } catch (e) {
         state = DownloadState.ERROR;
-        onStateChange({
+        notify({
             state,
             msg: e?.message,
         });
@@ -253,4 +298,5 @@ async function downloadFileNew(
 Comlink.expose({
     downloadFile,
     downloadFileNew,
+    abortDownload,
 });
