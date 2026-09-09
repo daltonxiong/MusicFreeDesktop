@@ -109,7 +109,7 @@ function RowOperations(props: { musicItem: IMusic.IMusicItem }) {
     );
 }
 
-/** 顶栏：全部暂停 / 全部继续 / 清除失败 */
+/** 顶栏：全部暂停 / 全部继续 / 全部重试 / 清除失败 */
 function DownloadingToolbar() {
     const { t: t2 } = useTranslation();
     const summary = Downloader.useDownloadSummary();
@@ -129,6 +129,13 @@ function DownloadingToolbar() {
                 onClick={() => Downloader.resumeAll()}
             >
                 {t2("download_page.resume_all")}
+            </button>
+            <button
+                className="downloading-op-btn"
+                disabled={summary.error === 0}
+                onClick={() => Downloader.retryFailedTasks()}
+            >
+                {t2("download_page.retry_all")}
             </button>
             <button
                 className="downloading-op-btn downloading-op-btn--danger"

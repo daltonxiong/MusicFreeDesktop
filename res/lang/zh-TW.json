@@ -81,6 +81,7 @@
     "paused": "已暫停",
     "pause_all": "全部暫停",
     "resume_all": "全部繼續",
+    "retry_all": "全部重試",
     "clear_failed": "清除失敗項",
     "remove_task": "移除任務",
     "manage": "管理",

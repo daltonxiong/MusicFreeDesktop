@@ -81,6 +81,7 @@
     "paused": "Paused",
     "pause_all": "Pause All",
     "resume_all": "Resume All",
+    "retry_all": "Retry All",
     "clear_failed": "Clear Failed",
     "remove_task": "Remove Task",
     "manage": "Manage",
